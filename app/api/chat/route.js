@@ -36,12 +36,28 @@ async function fireLeadWebhook(leadData, appsScriptUrl) {
  * Looks for: [LEAD:name=X,grade=Y,phone=Z]
  */
 function extractLead(text) {
-  const match = text.match(/\[LEAD:name=([^,]+),grade=([^,]+),phone=([^\]]+)\]/);
-  if (!match) return null;
+  const tag = text.match(/\[LEAD:(.*?)\]/s);
+  if (!tag) return null;
+
+  const body = tag[1];
+  const grab = (key) => {
+    const m = body.match(
+      new RegExp(`${key}\\s*=\\s*(.*?)(?:,\\s*(?:name|grade|phone)\\s*=|$)`, "i")
+    );
+    return m ? m[1].trim() : "";
+  };
+
+  const parentName = grab("name");
+  const grade = grab("grade");
+  const phoneNumber = grab("phone");
+
+  // Only count it as a lead if all three are present
+  if (!parentName || !grade || !phoneNumber) return null;
+
   return {
-    parentName: match[1].trim(),
-    grade: match[2].trim(),
-    phoneNumber: match[3].trim(),
+    parentName,
+    grade,
+    phoneNumber,
     date: new Date().toISOString(),
     source: SCHOOL.source,
   };
