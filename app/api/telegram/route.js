@@ -1,5 +1,3 @@
-cat > app/api/telegram/route.js << 'ENDOFFILE'
-// app/api/telegram/route.js
 import { Redis } from "@upstash/redis";
 import { getActiveSchool } from "../../../lib/schools";
 
@@ -24,14 +22,22 @@ function extractLead(text) {
   if (!tag) return null;
   const body = tag[1];
   const grab = (key) => {
-    const m = body.match(new RegExp(`${key}\\s*=\\s*(.*?)(?:,\\s*(?:name|grade|phone)\\s*=|$)`, "i"));
+    const m = body.match(
+      new RegExp(`${key}\\s*=\\s*(.*?)(?:,\\s*(?:name|grade|phone)\\s*=|$)`, "i")
+    );
     return m ? m[1].trim() : "";
   };
   const parentName = grab("name");
   const grade = grab("grade");
   const phoneNumber = grab("phone");
   if (!parentName || !grade || !phoneNumber) return null;
-  return { parentName, grade, phoneNumber, date: new Date().toISOString(), source: `${SCHOOL.source} (Telegram)` };
+  return {
+    parentName,
+    grade,
+    phoneNumber,
+    date: new Date().toISOString(),
+    source: `${SCHOOL.source} (Telegram)`,
+  };
 }
 
 async function fireLeadWebhook(leadData) {
@@ -50,7 +56,9 @@ async function fireLeadWebhook(leadData) {
 
 export async function POST(req) {
   const secret = req.headers.get("x-telegram-bot-api-secret-token");
-  if (WEBHOOK_SECRET && secret !== WEBHOOK_SECRET) return new Response("Forbidden", { status: 403 });
+  if (WEBHOOK_SECRET && secret !== WEBHOOK_SECRET) {
+    return new Response("Forbidden", { status: 403 });
+  }
 
   const update = await req.json();
   const msg = update.message;
@@ -64,13 +72,23 @@ export async function POST(req) {
     await redis.del(histKey);
     await tg("sendMessage", {
       chat_id: chatId,
-      text: `👋 Welcome to CIA FIRST International School!\n\nI'm your admissions assistant — I can help with fees, campuses, programs (FTI/FTK/FTC), and enrolment.\n\nWhat's your name? And which grade level are you enquiring about?\n\n—\nសួស្តី! ខ្ញុំអាចជួយអ្នកអំពីថ្លៃសិក្សា បរិវេណសាលា និងការចុះឈ្មោះ។ តើអ្នកឈ្មោះអ្វី?`,
+      text:
+        `👋 Welcome to CIA FIRST International School!\n\n` +
+        `I'm your admissions assistant — I can help with fees, campuses, programs (FTI/FTK/FTC), and enrolment.\n\n` +
+        `What's your name? And which grade level are you enquiring about?\n\n` +
+        `—\n` +
+        `សួស្តី! ខ្ញុំអាចជួយអ្នកអំពីថ្លៃសិក្សា បរិវេណសាលា និងការចុះឈ្មោះ។ តើអ្នកឈ្មោះអ្វី?`,
     });
     return new Response("ok", { status: 200 });
   }
 
   let history = [];
-  try { history = (await redis.get(histKey)) || []; } catch (_) { history = []; }
+  try {
+    history = (await redis.get(histKey)) || [];
+  } catch (_) {
+    history = [];
+  }
+
   history.push({ role: "user", content: userText });
   await tg("sendChatAction", { chat_id: chatId, action: "typing" });
 
@@ -78,17 +96,39 @@ export async function POST(req) {
   try {
     const aiRes = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
-      headers: { "Content-Type": "application/json", "x-api-key": ANTHROPIC_KEY, "anthropic-version": "2023-06-01" },
-      body: JSON.stringify({ model: "claude-sonnet-4-6", max_tokens: 1000, system: SCHOOL.systemPrompt, messages: history }),
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": ANTHROPIC_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        system: SCHOOL.systemPrompt,
+        messages: history,
+      }),
     });
+
     if (!aiRes.ok) {
-      await tg("sendMessage", { chat_id: chatId, text: "Sorry, I had trouble responding. Please try again or call +855 99 200 011." });
+      await tg("sendMessage", {
+        chat_id: chatId,
+        text: "Sorry, I had trouble responding. Please try again or call +855 99 200 011.",
+      });
       return new Response("ok", { status: 200 });
     }
+
     const aiData = await aiRes.json();
-    rawReply = aiData.content?.map((b) => (b.type === "text" ? b.text : "")).filter(Boolean).join("\n") || "Sorry, I had trouble responding.";
+    rawReply =
+      aiData.content
+        ?.map((b) => (b.type === "text" ? b.text : ""))
+        .filter(Boolean)
+        .join("\n") || "Sorry, I had trouble responding.";
   } catch (err) {
-    await tg("sendMessage", { chat_id: chatId, text: "Sorry, I had trouble responding. Please try again." });
+    console.error("[TG] Claude call failed:", err.message);
+    await tg("sendMessage", {
+      chat_id: chatId,
+      text: "Sorry, I had trouble responding. Please try again.",
+    });
     return new Response("ok", { status: 200 });
   }
 
@@ -105,8 +145,15 @@ export async function POST(req) {
 
   const cleanReply = rawReply.replace(/\[LEAD:[^\]]+\]/g, "").trim();
   history.push({ role: "assistant", content: cleanReply });
-  try { await redis.set(histKey, history.slice(-20), { ex: 86400 }); } catch (_) {}
-  await tg("sendMessage", { chat_id: chatId, text: cleanReply });
+
+  try {
+    await redis.set(histKey, history.slice(-20), { ex: 86400 });
+  } catch (_) {}
+
+  await tg("sendMessage", {
+    chat_id: chatId,
+    text: cleanReply,
+  });
+
   return new Response("ok", { status: 200 });
 }
-ENDOFFILE
