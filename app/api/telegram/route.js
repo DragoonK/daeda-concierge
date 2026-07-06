@@ -6,7 +6,7 @@
 // ─────────────────────────────────────────────────────────────
 
 import { Redis } from "@upstash/redis";
-import { getActiveSchool } from "@/lib/schools";
+import { getActiveSchool } from "../../../lib/schools";
 
 const SCHOOL = getActiveSchool();
 const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
@@ -212,4 +212,4 @@ export async function POST(req) {
   });
 
   return new Response("ok", { status: 200 });
-}
+}// Mon Jul  6 17:21:09 +07 2026
