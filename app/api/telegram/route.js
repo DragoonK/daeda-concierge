@@ -67,9 +67,11 @@ export async function POST(req) {
   const chatId = msg.chat.id;
   const userText = msg.text.trim();
   const histKey = `tg:hist:${chatId}`;
+  const leadCapturedKey = `tg:lead:${chatId}`;
 
   if (userText === "/start") {
     await redis.del(histKey);
+    await redis.del(leadCapturedKey);
     await tg("sendMessage", {
       chat_id: chatId,
       text:
@@ -88,6 +90,12 @@ export async function POST(req) {
   } catch (_) {
     history = [];
   }
+
+  // Check if lead already captured for this chat
+  let leadAlreadyCaptured = false;
+  try {
+    leadAlreadyCaptured = await redis.get(leadCapturedKey);
+  } catch (_) {}
 
   history.push({ role: "user", content: userText });
   await tg("sendChatAction", { chat_id: chatId, action: "typing" });
@@ -132,8 +140,9 @@ export async function POST(req) {
     return new Response("ok", { status: 200 });
   }
 
+  // Only fire lead webhook once per chat session
   const lead = extractLead(rawReply);
-  if (lead) {
+  if (lead && !leadAlreadyCaptured) {
     await fireLeadWebhook({
       parentName: lead.parentName,
       grade: lead.grade,
@@ -141,6 +150,10 @@ export async function POST(req) {
       firstMessage: history[0]?.content?.slice(0, 200) || "",
       source: lead.source,
     });
+    // Mark lead as captured for 7 days
+    try {
+      await redis.set(leadCapturedKey, "1", { ex: 60 * 60 * 24 * 7 });
+    } catch (_) {}
   }
 
   const cleanReply = rawReply.replace(/\[LEAD:[^\]]+\]/g, "").trim();
