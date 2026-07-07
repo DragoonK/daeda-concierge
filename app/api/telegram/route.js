@@ -31,13 +31,7 @@ function extractLead(text) {
   const grade = grab("grade");
   const phoneNumber = grab("phone");
   if (!parentName || !grade || !phoneNumber) return null;
-  return {
-    parentName,
-    grade,
-    phoneNumber,
-    date: new Date().toISOString(),
-    source: `${SCHOOL.source} (Telegram)`,
-  };
+  return { parentName, grade, phoneNumber };
 }
 
 async function fireLeadWebhook(leadData) {
@@ -67,11 +61,21 @@ export async function POST(req) {
   const chatId = msg.chat.id;
   const userText = msg.text.trim();
   const histKey = `tg:hist:${chatId}`;
-  const leadCapturedKey = `tg:lead:${chatId}`;
+  const autoLeadKey = `tg:auto:${chatId}`;
+  const fullLeadKey = `tg:lead:${chatId}`;
+
+  // Build Telegram identity from profile (free, no asking needed)
+  const telegramName = [msg.from?.first_name, msg.from?.last_name]
+    .filter(Boolean)
+    .join(" ") || "Telegram User";
+  const telegramContact = msg.from?.username
+    ? `@${msg.from.username}`
+    : `TG_ID:${chatId}`;
 
   if (userText === "/start") {
     await redis.del(histKey);
-    await redis.del(leadCapturedKey);
+    await redis.del(autoLeadKey);
+    await redis.del(fullLeadKey);
     await tg("sendMessage", {
       chat_id: chatId,
       text:
@@ -84,19 +88,37 @@ export async function POST(req) {
     return new Response("ok", { status: 200 });
   }
 
+  // ── PHASE 1: Auto-capture on very first message ──────────────
+  // The moment anyone messages the bot, capture their Telegram
+  // identity immediately — no asking required. Their Telegram
+  // username IS their contact method.
   let history = [];
   try {
     history = (await redis.get(histKey)) || [];
-  } catch (_) {
-    history = [];
-  }
-
-  // Check if lead already captured for this chat
-  let leadAlreadyCaptured = false;
-  try {
-    leadAlreadyCaptured = await redis.get(leadCapturedKey);
   } catch (_) {}
 
+  const isFirstMessage = history.length === 0;
+  let autoLeadDone = false;
+  try {
+    autoLeadDone = await redis.get(autoLeadKey);
+  } catch (_) {}
+
+  if (isFirstMessage && !autoLeadDone) {
+    await fireLeadWebhook({
+      parentName: telegramName,
+      grade: "Enquiring",
+      phoneNumber: telegramContact,
+      firstMessage: userText.slice(0, 200),
+      source: `${SCHOOL.source} (Telegram)`,
+    });
+    try {
+      await redis.set(autoLeadKey, "1", { ex: 60 * 60 * 24 * 30 });
+    } catch (_) {}
+  }
+
+  // ── PHASE 2: Full lead capture when grade is known ───────────
+  // If Claude extracts all three fields from conversation,
+  // write a second enriched row (once only) with the grade confirmed.
   history.push({ role: "user", content: userText });
   await tg("sendChatAction", { chat_id: chatId, action: "typing" });
 
@@ -140,19 +162,23 @@ export async function POST(req) {
     return new Response("ok", { status: 200 });
   }
 
-  // Only fire lead webhook once per chat session
+  // Phase 2 — enriched lead with confirmed grade (fires once only)
+  let fullLeadDone = false;
+  try {
+    fullLeadDone = await redis.get(fullLeadKey);
+  } catch (_) {}
+
   const lead = extractLead(rawReply);
-  if (lead && !leadAlreadyCaptured) {
+  if (lead && !fullLeadDone) {
     await fireLeadWebhook({
-      parentName: lead.parentName,
+      parentName: lead.parentName || telegramName,
       grade: lead.grade,
-      phoneNumber: lead.phoneNumber,
+      phoneNumber: lead.phoneNumber || telegramContact,
       firstMessage: history[0]?.content?.slice(0, 200) || "",
-      source: lead.source,
+      source: `${SCHOOL.source} (Telegram - Qualified)`,
     });
-    // Mark lead as captured for 7 days
     try {
-      await redis.set(leadCapturedKey, "1", { ex: 60 * 60 * 24 * 7 });
+      await redis.set(fullLeadKey, "1", { ex: 60 * 60 * 24 * 7 });
     } catch (_) {}
   }
 
