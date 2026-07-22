@@ -1,6 +1,6 @@
 import { Redis } from '@upstash/redis';
 import Anthropic from '@anthropic-ai/sdk';
-import { schools } from '../../../../lib/schools';
+import { SCHOOLS as schools } from '../../../../lib/schools';
 
 const redis = new Redis({
   url: process.env.UPSTASH_REDIS_REST_URL,
