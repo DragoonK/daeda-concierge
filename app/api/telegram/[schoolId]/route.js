@@ -52,6 +52,21 @@ export async function POST(req, { params }) {
     }
     const welcome = school.welcomeMessage || `Welcome to ${school.name}! How can I help?`;
     await sendTelegram(chatId, welcome);
+
+    // Log a lightweight "chat opened" event — separate from full lead capture,
+    // captures Telegram identity even if the parent never completes the conversation
+    fetch(school.appsScriptUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        parentName: msg.from.username ? `@${msg.from.username}` : (msg.from.first_name || 'Unknown'),
+        grade: '',
+        phoneNumber: '',
+        firstMessage: '/start',
+        source: `telegram_${campaign}_CHAT_OPENED`,
+      }),
+    }).catch(() => {});
+
     return Response.json({ ok: true });
   }
 
